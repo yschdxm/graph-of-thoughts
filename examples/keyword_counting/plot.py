@@ -77,7 +77,7 @@ def get_plotting_data(base_directory):
 
 def plot_results(
     results,
-    methods_order=["io", "cot", "tot", "tot2", "got4", "got8", "gotx"],
+    methods_order=["direct_method", "cot", "tot", "tot2", "got4", "got8", "gotx"],
     model="GPT-3.5",
     y_lower=0,
     y_upper=40,
@@ -156,10 +156,10 @@ def plot_results(
 
 
 plot_results(
-    get_plotting_data("results/"),
+    get_plotting_data("examples/keyword_counting/results/"),
     display_solved=True,
     annotation_offset=-0.3,
-    model="GPT-3.5",
+    model="deepseek-vocano",
     y_upper=35,
     display_left_ylabel=True,
     display_right_ylabel=True,

@@ -106,7 +106,7 @@ def get_plotting_data(base_directory, score_method):
 def plot_results(
     name,
     results,
-    methods_order=["io", "cot", "tot", "tot2", "tog"],
+    methods_order=["direct_method", "cot", "tot", "tot2", "tog"],
     methods_labels=["IO", "CoT", "ToT", "ToT2", "GoT"],
     model="GPT-3.5",
     length=32,
@@ -243,7 +243,7 @@ def plot_results(
 plot_results(
     "set_intersection",
     get_plotting_data("set_intersection_gpt35_032", get_final_scores),
-    methods_order=["io", "cot", "tot", "tot2", "tog2"],
+    methods_order=["direct_method", "cot", "tot", "tot2", "tog2"],
     length=32,
     y_upper=19,
     cost_upper=2,
@@ -256,7 +256,7 @@ plot_results(
 plot_results(
     "set_intersection",
     get_plotting_data("set_intersection_gpt35_064", get_final_scores),
-    methods_order=["io", "cot", "tot", "tot2", "tog2"],
+    methods_order=["direct_method", "cot", "tot", "tot2", "tog2"],
     length=64,
     y_upper=32,
     cost_upper=5.4,
@@ -269,7 +269,7 @@ plot_results(
 plot_results(
     "set_intersection",
     get_plotting_data("set_intersection_gpt35_128", get_final_scores),
-    methods_order=["io", "cot", "tot", "tot2", "tog2"],
+    methods_order=["direct_method", "cot", "tot", "tot2", "tog2"],
     length=128,
     y_upper=94,
     cost_upper=12,
@@ -314,7 +314,7 @@ plot_results(
 plot_results(
     "keyword_counting",
     get_plotting_data("keyword_counting_gpt35", get_final_scores),
-    methods_order=["io", "cot", "tot", "tot2", "gsp4", "gsp8", "gspx"],
+    methods_order=["direct_method", "cot", "tot", "tot2", "gsp4", "gsp8", "gspx"],
     methods_labels=["IO", "CoT", "ToT", "ToT2", "GoT4", "GoT8", "GoTx"],
     y_upper=35,
     cost_upper=9,
@@ -327,7 +327,7 @@ plot_results(
 plot_results(
     "document_merging",
     get_plotting_data("document_merging_gpt35_16k", get_final_scores_doc_merge),
-    methods_order=["io", "cot", "tot", "gsp", "gsp2"],
+    methods_order=["direct_method", "cot", "tot", "gsp", "gsp2"],
     methods_labels=["IO", "CoT", "ToT", "GoT", "GoT2"],
     y_upper=10,
     cost_upper=15,

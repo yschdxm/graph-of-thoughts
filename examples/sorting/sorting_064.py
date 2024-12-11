@@ -211,7 +211,7 @@ Merged list:
             input = original
         else:
             input = current
-        if method.startswith("io"):
+        if method.startswith("direct_method"):
             return self.sort_prompt.format(input=input)
         elif method.startswith("cot"):
             return self.sort_prompt_cot.format(input=input)
@@ -467,7 +467,7 @@ class SortingParser(parser.Parser):
         pass
 
 
-def io() -> operations.GraphOfOperations:
+def direct_method() -> operations.GraphOfOperations:
     """
     Generates the Graph of Operations for the IO method.
 
@@ -783,7 +783,7 @@ if __name__ == "__main__":
     """
     budget = 30
     samples = [item for item in range(0, 100)]
-    approaches = [io, cot, tot, tot2, got]
+    approaches = [direct_method, cot, tot, tot2, got]
 
     spent = run(samples, approaches, budget, "chatgpt")
 

@@ -5,6 +5,18 @@
 # found in the LICENSE file.
 #
 # main author: Nils Blach
+import sys
+sys.path.append(r'F:\UPC\暑期实践\2025\graph-of-thoughts')
+
+import tqdm
+import cProfile
+import pstats
+import io
+from pstats import SortKey
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 import os
 import logging
@@ -206,7 +218,7 @@ Merged list:
             input = original
         else:
             input = current
-        if method.startswith("io"):
+        if method.startswith("direct_method"):
             return self.sort_prompt.format(input=input)
         elif method.startswith("cot"):
             return self.sort_prompt_cot.format(input=input)
@@ -461,7 +473,7 @@ class SortingParser(parser.Parser):
         pass
 
 
-def io() -> operations.GraphOfOperations:
+def direct_method() -> operations.GraphOfOperations:
     """
     Generates the Graph of Operations for the IO method.
 
@@ -560,7 +572,7 @@ def got() -> operations.GraphOfOperations:
     """
     operations_graph = operations.GraphOfOperations()
 
-    plans = operations.Generate(2, 1)
+    plans = operations.Generate(1, 1)
     operations_graph.append_operation(plans)  # generate the sublists
     for i in range(1, 3):
         list_id = f"List {i}"
@@ -598,28 +610,138 @@ def got() -> operations.GraphOfOperations:
     return operations_graph
 
 
-def run(
+# def run(
+#     data_ids: List[int],
+#     methods: List[Callable[[], operations.GraphOfOperations]],
+#     budget: float,
+#     lm_name: str,
+# ) -> float:
+#     """
+#     Controller function that executes each specified method for each specified
+#     sample while the budget is not exhausted.
+
+#     :param data_ids: Indices of the sample to be run.
+#     :type data_ids: List[int]
+#     :param methods: List of functions to generate Graphs of Operations.
+#     :type methods: Each function generates a Graph of Operation.
+#     :param budget: Language model budget for the execution in dollars.
+#     :type budget: float
+#     :param lm_name: Name of the language model to be used.
+#     :type lm_name: str
+#     :return: Spent budget in dollars.
+#     :rtype: float
+#     """
+
+#     orig_budget = budget
+#     data_path = os.path.join(os.path.dirname(__file__), "sorting_032.csv")
+#     data = []
+#     with open(data_path, "r") as f:
+#         reader = csv.reader(f)
+#         next(reader)
+#         for row in reader:
+#             data.append([int(row[0]), row[1], row[2]])
+
+#     if data_ids is None or len(data_ids) == 0:
+#         data_ids = list(range(len(data)))
+#     selected_data = [data[i] for i in data_ids]
+
+#     results_dir = os.path.join(os.path.dirname(__file__), "results")
+
+#     if not os.path.exists(results_dir):
+#         os.makedirs(results_dir)
+#     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+#     extra_info = f"{lm_name}_{'-'.join([method.__name__ for method in methods])}"
+#     folder_name = f"{extra_info}_{timestamp}"
+#     results_folder = os.path.join(results_dir, folder_name)
+#     os.makedirs(results_folder)
+
+#     config = {
+#         "data": selected_data,
+#         "methods": [method.__name__ for method in methods],
+#         "lm": lm_name,
+#         "budget": budget,
+#     }
+#     with open(os.path.join(results_folder, "config.json"), "w") as f:
+#         json.dump(config, f)
+
+#     logging.basicConfig(
+#         filename=os.path.join(results_folder, "log.log"),
+#         filemode="w",
+#         format="%(name)s - %(levelname)s - %(message)s",
+#         level=logging.DEBUG,
+#     )
+
+#     for method in methods:
+#         os.makedirs(os.path.join(results_folder, method.__name__))
+
+#     main_prossess = tqdm.tqdm(
+#         selected_data,
+#         desc="Processing documents",
+#         position=0,
+#         leave=True,
+#         dynamic_ncols=True
+#     )
+
+#     for data in main_prossess:
+#         main_prossess.set_postfix({"Buget": f"{budget:.2f}", "DocID": data[0]})
+#         if budget <= 0.0:
+#             logging.error(
+#                 f"Budget has been depleted, stopping. Data {data[0]} has not been run."
+#             )
+#             break
+#         for method in methods:
+#             logging.info(f"Running method {method.__name__}")
+#             logging.info(f"Budget left: {budget}")
+#             if budget <= 0.0:
+#                 logging.error(
+#                     f"Budget has been depleted, stopping. Method {method.__name__} has not been run."
+#                 )
+#                 break
+#             lm = language_models.Ollama(
+#                 os.path.join(
+#                     os.path.dirname(__file__),
+#                     "../../graph_of_thoughts/language_models/config.json",
+#                 ),
+#                 model_name=lm_name,
+#                 cache=True,
+#             )
+#             operations_graph = method()
+#             executor = controller.Controller(
+#                 lm,
+#                 operations_graph,
+#                 SortingPrompter(),
+#                 SortingParser(),
+#                 {
+#                     "original": data[1],
+#                     "current": "",
+#                     "phase": 0,
+#                     "method": method.__name__,
+#                 },
+#             )
+#             try:
+#                 executor.run()
+#             except Exception as e:
+#                 logging.error(f"Exception: {e}")
+#             path = os.path.join(
+#                 results_folder,
+#                 method.__name__,
+#                 f"{data[0]}.json",
+#             )
+#             executor.output_graph(path)
+#             budget -= lm.cost
+
+#     return orig_budget - budget
+
+async def run_async(
     data_ids: List[int],
     methods: List[Callable[[], operations.GraphOfOperations]],
     budget: float,
     lm_name: str,
 ) -> float:
     """
-    Controller function that executes each specified method for each specified
-    sample while the budget is not exhausted.
-
-    :param data_ids: Indices of the sample to be run.
-    :type data_ids: List[int]
-    :param methods: List of functions to generate Graphs of Operations.
-    :type methods: Each function generates a Graph of Operation.
-    :param budget: Language model budget for the execution in dollars.
-    :type budget: float
-    :param lm_name: Name of the language model to be used.
-    :type lm_name: str
-    :return: Spent budget in dollars.
-    :rtype: float
+    Async controller function that executes each specified method for each specified
+    sample while the budget is not exhausted, with full parallelism.
     """
-
     orig_budget = budget
     data_path = os.path.join(os.path.dirname(__file__), "sorting_032.csv")
     data = []
@@ -629,14 +751,13 @@ def run(
         for row in reader:
             data.append([int(row[0]), row[1], row[2]])
 
-    if data_ids is None or len(data_ids) == 0:
+    if not data_ids:
         data_ids = list(range(len(data)))
     selected_data = [data[i] for i in data_ids]
 
     results_dir = os.path.join(os.path.dirname(__file__), "results")
-
-    if not os.path.exists(results_dir):
-        os.makedirs(results_dir)
+    os.makedirs(results_dir, exist_ok=True)
+    
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     extra_info = f"{lm_name}_{'-'.join([method.__name__ for method in methods])}"
     folder_name = f"{extra_info}_{timestamp}"
@@ -659,34 +780,34 @@ def run(
         level=logging.DEBUG,
     )
 
+    # Create method folders
     for method in methods:
-        os.makedirs(os.path.join(results_folder, method.__name__))
+        os.makedirs(os.path.join(results_folder, method.__name__), exist_ok=True)
 
-    for data in selected_data:
-        logging.info(f"Running data {data[0]}: {data[1]}")
-        if budget <= 0.0:
-            logging.error(
-                f"Budget has been depleted, stopping. Data {data[0]} has not been run."
-            )
-            break
-        for method in methods:
-            logging.info(f"Running method {method.__name__}")
-            logging.info(f"Budget left: {budget}")
-            if budget <= 0.0:
-                logging.error(
-                    f"Budget has been depleted, stopping. Method {method.__name__} has not been run."
-                )
-                break
-            lm = language_models.ChatGPT(
-                os.path.join(
-                    os.path.dirname(__file__),
-                    "../../graph_of_thoughts/language_models/config.json",
-                ),
-                model_name=lm_name,
-                cache=True,
-            )
+    # Create a thread pool for parallel execution
+    max_workers = min(32, len(selected_data) * len(methods))
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    loop = asyncio.get_event_loop()
+    budget_lock = asyncio.Lock()
+    remaining_budget = budget
+
+    async def process_sample(method, data):
+        nonlocal remaining_budget
+        if remaining_budget <= 0:
+            return 0.0
+
+        lm = language_models.Ollama(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../graph_of_thoughts/language_models/config.json",
+            ),
+            model_name=lm_name,
+            cache=True,
+        )
+        
+        try:
             operations_graph = method()
-            executor = controller.Controller(
+            controller_instance = controller.Controller(
                 lm,
                 operations_graph,
                 SortingPrompter(),
@@ -698,20 +819,108 @@ def run(
                     "method": method.__name__,
                 },
             )
-            try:
-                executor.run()
-            except Exception as e:
-                logging.error(f"Exception: {e}")
+            
+            # 在单独的线程中运行控制器
+            await loop.run_in_executor(executor, controller_instance.run)
+            
             path = os.path.join(
                 results_folder,
                 method.__name__,
                 f"{data[0]}.json",
             )
-            executor.output_graph(path)
-            budget -= lm.cost
+            controller_instance.output_graph(path)
+            
+            async with budget_lock:
+                cost = lm.cost
+                remaining_budget -= cost
+                return cost
+        finally:
+            # 确保关闭语言模型连接
+            if hasattr(lm, 'close'):
+                await lm.close()  # 添加关闭方法
 
-    return orig_budget - budget
 
+    # 创建所有任务（方法 x 样本）
+    tasks = []
+    for data in selected_data:
+        for method in methods:
+            # 创建任务而不仅仅是协程
+            task = asyncio.create_task(process_sample(method, data))
+            tasks.append(task)
+
+    # 使用任务运行进度条
+    total_tasks = len(tasks)
+    with tqdm.tqdm(total=total_tasks, desc="Processing", dynamic_ncols=True) as pbar:
+        start_time = time.time()
+        completed = 0
+        
+        # 使用asyncio.as_completed获取完成的任务
+        for future in asyncio.as_completed(tasks):
+            cost = await future
+            completed += 1
+            elapsed = time.time() - start_time
+            remaining = (elapsed / completed) * (total_tasks - completed) if completed > 0 else 0
+            
+            # 获取活跃线程数 - 直接统计活跃线程
+            try:
+                # 获取线程池中所有线程
+                threads = [t for t in executor._threads if t.is_alive()]
+                # 计算活跃线程数
+                active_threads = len(threads)
+            except Exception as e:
+                # 如果无法获取，使用默认值
+                logging.warning(f"Error getting active threads: {e}")
+                active_threads = max_workers
+            
+            # 确保活跃线程数在合理范围内
+            active_threads = max(0, min(max_workers, active_threads))
+            
+            pbar.set_postfix({
+                "Budget": f"{remaining_budget:.2f}",
+                "Active": f"{active_threads}/{max_workers}",
+                "Completed": f"{completed}/{total_tasks}",
+                "Elapsed": f"{elapsed:.1f}s",
+                "Remaining": f"{remaining:.1f}s"
+            })
+            pbar.update(1)
+
+    # 关闭线程池
+    executor.shutdown(wait=True)
+    return orig_budget - remaining_budget
+
+
+def run(
+    data_ids: List[int],
+    methods: List[Callable[[], operations.GraphOfOperations]],
+    budget: float,
+    lm_name: str,
+) -> float:
+    """
+    Synchronous wrapper for the async run function.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(run_async(data_ids, methods, budget, lm_name))
+    finally:
+        loop.close()
+
+def run_with_profiling(*args, **kwargs):
+    pr = cProfile.Profile()
+    pr.enable()
+    
+    result = run(*args, **kwargs)  # 调用原始run函数
+    
+    pr.disable()
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats(SortKey.CUMULATIVE)
+    ps.print_stats()
+    
+    # 保存分析结果
+    with open('performance_profile.txt', 'w') as f:
+        f.write(s.getvalue())
+    
+    return result
 
 if __name__ == "__main__":
     """
@@ -725,8 +934,8 @@ if __name__ == "__main__":
     """
     budget = 30
     samples = [item for item in range(0, 100)]
-    approaches = [io, cot, tot, tot2, got]
+    approaches = [direct_method, cot, tot, tot2, got]
 
-    spent = run(samples, approaches, budget, "chatgpt")
+    spent = run_with_profiling(samples, approaches, budget, "ollama-qwen2.5_1.5b")
 
     logging.info(f"Spent {spent} out of {budget} budget.")

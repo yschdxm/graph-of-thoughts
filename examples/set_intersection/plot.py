@@ -77,7 +77,7 @@ def get_plotting_data(base_directory):
 
 def plot_results(
     results,
-    methods_order=["io", "cot", "tot", "tot2", "got"],
+    methods_order=["direct_method", "cot", "tot", "tot2", "got"],
     model="GPT-3.5",
     length=32,
     y_lower=0,

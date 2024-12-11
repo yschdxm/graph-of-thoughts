@@ -217,7 +217,7 @@ List 2: {input2}
         """
 
         assert num_branches == 1, "Branching should be done via multiple requests."
-        if method.startswith("io"):
+        if method.startswith("direct_method"):
             return self.intersection_prompt.format(set1=set1, set2=set2)
         elif method.startswith("cot"):
             return self.intersection_prompt_cot.format(set1=set1, set2=set2)
@@ -457,7 +457,7 @@ class SetIntersectionParser(parser.Parser):
         pass
 
 
-def io() -> operations.GraphOfOperations:
+def direct_method() -> operations.GraphOfOperations:
     """
     Generates the Graph of Operations for the IO method.
 
@@ -798,7 +798,7 @@ if __name__ == "__main__":
 
     budget = 25
     samples = [item for item in range(0, 100)]
-    approaches = [io, cot, tot, tot2, got]
+    approaches = [direct_method, cot, tot, tot2, got]
 
     spent = run(samples, approaches, budget, "chatgpt")
 

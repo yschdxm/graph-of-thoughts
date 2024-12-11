@@ -9,6 +9,15 @@
 #
 # main author: Nils Blach
 # contributions: Ales Kubicek
+import sys
+sys.path.append(r'F:\UPC\暑期实践\2025\graph-of-thoughts')
+
+import tqdm
+import cProfile
+import pstats
+import io
+from pstats import SortKey
+
 
 import os
 import logging
@@ -773,7 +782,7 @@ Output:
             input = original
         else:
             input = current
-        if method.startswith("io"):
+        if method.startswith("direct_method"):
             return self.count_prompt.format(input=input)
         elif method.startswith("cot"):
             return self.count_prompt_cot.format(input=input)
@@ -1023,7 +1032,7 @@ class KeywordCountingParser(parser.Parser):
         pass
 
 
-def io(all_potential_countries) -> operations.GraphOfOperations:
+def direct_method(all_potential_countries) -> operations.GraphOfOperations:
     """
     Generates the Graph of Operations for the IO method.
 
@@ -1387,7 +1396,16 @@ def run(
         # create a results directory for the method
         os.makedirs(os.path.join(results_folder, method.__name__))
 
-    for data in selected_data:
+    main_prossess = tqdm.tqdm(
+        selected_data,
+        desc="Processing documents",
+        position=0,
+        leave=True,
+        dynamic_ncols=True
+    )
+
+    for data in main_prossess:
+        main_prossess.set_postfix({"Buget": f"{budget:.2f}", "DocID": data[0]})
         logging.info(f"Running data {data[0]}: {data[1]}")
         if budget <= 0.0:
             logging.error(
@@ -1438,6 +1456,22 @@ def run(
 
     return orig_budget - budget
 
+def run_with_profiling(*args, **kwargs):
+    pr = cProfile.Profile()
+    pr.enable()
+    
+    result = run(*args, **kwargs)  # 调用原始run函数
+    
+    pr.disable()
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats(SortKey.CUMULATIVE)
+    ps.print_stats()
+    
+    # 保存分析结果
+    with open('performance_profile.txt', 'w') as f:
+        f.write(s.getvalue())
+    
+    return result
 
 if __name__ == "__main__":
     """
@@ -1450,9 +1484,9 @@ if __name__ == "__main__":
         {Spain: 2, ...}
     """
     budget = 30
-    samples = [item for item in range(0, 100)]
-    approaches = [io, cot, tot, tot2, got4, got8, gotx]
+    samples = [item for item in range(0, 1)]
+    approaches = [direct_method, cot, tot, tot2, got4, got8, gotx]
 
-    spent = run(samples, approaches, budget, "chatgpt")
+    spent = run_with_profiling(samples, approaches, budget, "deepseek-vocano")
 
     logging.info(f"Spent {spent} out of {budget} budget.")

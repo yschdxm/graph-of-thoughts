@@ -5,6 +5,14 @@
 # found in the LICENSE file.
 #
 # main author: Nils Blach
+import sys
+sys.path.append(r'F:\UPC\暑期实践\2025\graph-of-thoughts')
+
+import tqdm
+import cProfile
+import pstats
+import io
+from pstats import SortKey
 
 import os
 import re
@@ -190,8 +198,8 @@ NDA <S{num}>:
         """
 
         prompt = ""
-        if method.startswith("io") or method.startswith("cot"):
-            if method.startswith("io"):
+        if method.startswith("direct_method") or method.startswith("cot"):
+            if method.startswith("direct_method"):
                 prompt += self.merge_doc_prompt_start.format(num=len(documents))
             else:
                 prompt += self.merge_doc_prompt_cot_start.format(num=len(documents))
@@ -482,7 +490,7 @@ class DocMergeParser(parser.Parser):
         pass
 
 
-def io() -> operations.GraphOfOperations:
+def direct_method() -> operations.GraphOfOperations:
     """
     Generates the Graph of Operations for the IO method.
 
@@ -695,10 +703,28 @@ def run(
         level=logging.DEBUG,
     )
 
+    # logging.basicConfig(
+    #     level=logging.DEBUG,
+    #     format="%(name)s - %(levelname)s - %(message)s",
+    #     handlers=[
+    #         logging.FileHandler(os.path.join(results_folder, "log.log"), mode='w'),
+    #         logging.StreamHandler(sys.stdout)
+    #     ]
+    # )
+
     for method in methods:
         os.makedirs(os.path.join(results_folder, method.__name__))
 
-    for data in selected_data:
+    main_prossess = tqdm.tqdm(
+        selected_data,
+        desc="Processing documents",
+        position=0,
+        leave=True,
+        dynamic_ncols=True
+    )
+
+    for data in main_prossess:
+        main_prossess.set_postfix({"Buget": f"{budget:.2f}", "DocID": data[0]})
         logging.info(f"Running data {data[0]}: {data[1]}")
         if budget <= 0.0:
             logging.error(
@@ -751,6 +777,22 @@ def run(
 
     return orig_budget - budget
 
+def run_with_profiling(*args, **kwargs):
+    pr = cProfile.Profile()
+    pr.enable()
+    
+    result = run(*args, **kwargs)  # 调用原始run函数
+    
+    pr.disable()
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats(SortKey.CUMULATIVE)
+    ps.print_stats()
+    
+    # 保存分析结果
+    with open('performance_profile.txt', 'w') as f:
+        f.write(s.getvalue())
+    
+    return result
 
 if __name__ == "__main__":
     """
@@ -760,8 +802,8 @@ if __name__ == "__main__":
     """
     budget = 30
     samples = [item for item in range(0, 50)]
-    approaches = [io, cot, tot, got, got2]
+    approaches = [direct_method, cot, tot, got, got2]
 
-    spent = run(samples, approaches, budget, "chatgpt")
+    spent = run_with_profiling(samples, approaches, budget, "deepseek-vocano")
 
     logging.info(f"Spent {spent} out of {budget} budget.")
