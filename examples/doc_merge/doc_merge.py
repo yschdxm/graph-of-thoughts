@@ -5,10 +5,13 @@
 # found in the LICENSE file.
 #
 # main author: Nils Blach
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import sys
+import threading
 sys.path.append(r'F:\UPC\暑期实践\2025\graph-of-thoughts')
 
-import tqdm
+from tqdm import tqdm
 import cProfile
 import pstats
 import io
@@ -489,6 +492,39 @@ class DocMergeParser(parser.Parser):
         """
         pass
 
+class ProgressTracker:
+    def __init__(self, methods, total_samples_per_method):
+        self.methods = methods
+        self.total_samples = total_samples_per_method
+        self.completed_samples = {method.__name__: 0 for method in methods}
+        self.lock = threading.Lock()
+        self.active_tasks = 0
+        self.progress_bars = {}
+        
+    def update_progress(self, method_name, increment=1):
+        with self.lock:
+            self.completed_samples[method_name] += increment
+            if method_name in self.progress_bars:
+                self.progress_bars[method_name].update(increment)
+                
+    def update_active_tasks(self, delta):
+        with self.lock:
+            self.active_tasks += delta
+            
+    def initialize_progress_bars(self):
+        for method in self.methods:
+            self.progress_bars[method.__name__] = tqdm(
+                total=self.total_samples,
+                desc=f"{method.__name__} (0 active)",
+                position=list(self.methods).index(method),
+                leave=True
+            )
+            
+    def refresh_display(self):
+        with self.lock:
+            for method_name, bar in self.progress_bars.items():
+                bar.set_description(f"{method_name} ({self.active_tasks} active)")
+                bar.refresh()
 
 def direct_method() -> operations.GraphOfOperations:
     """
@@ -641,29 +677,107 @@ def got2() -> operations.GraphOfOperations:
     return operations_graph
 
 
-def run(
+def run_sample_sync(data, method, results_folder, lm_name, progress_tracker):
+    """同步版本的样本执行函数"""
+    try:
+        progress_tracker.update_active_tasks(1)
+        progress_tracker.refresh_display()
+        
+        # 创建新的事件循环
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        lm = language_models.Ollama(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../graph_of_thoughts/language_models/config.json",
+            ),
+            model_name=lm_name,
+        )
+        operations_graph = method()
+        executor = controller.Controller(
+            lm,
+            operations_graph,
+            DocMergePrompter(),
+            DocMergeParser(),
+            {
+                "documents": [data[2], data[3], data[4], data[5]],
+                "parts": set(),
+                "current": "",
+                "method": method.__name__,
+            },
+        )
+        executor.run()
+        path = os.path.join(
+            results_folder,
+            method.__name__,
+            f"{data[0]}.json",
+        )
+        # Convert sets to lists for JSON serialization
+        for operation in operations_graph.operations:
+            for thought in operation.thoughts:
+                if "parts" in thought.state:
+                    thought.state["parts"] = list(thought.state["parts"])
+        executor.output_graph(path)
+        
+        progress_tracker.update_progress(method.__name__)
+        return lm.cost
+        
+    except Exception as e:
+        logging.error(f"Exception in {method.__name__} for data {data[0]}: {e}")
+        return 0
+    finally:
+        progress_tracker.update_active_tasks(-1)
+        progress_tracker.refresh_display()
+        loop.close()
+
+async def run_method(method, selected_data, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker):
+    """运行单个方法的所有样本"""
+    method_dir = os.path.join(results_folder, method.__name__)
+    os.makedirs(method_dir, exist_ok=True)
+    
+    total_cost = 0
+    
+    for data in selected_data:
+        async with budget_lock:
+            if remaining_budget[0] <= 0.0:
+                logging.warning(f"Budget depleted, skipping remaining samples for {method.__name__}")
+                break
+        
+        # 在线程池中运行同步代码
+        loop = asyncio.get_running_loop()
+        cost = await loop.run_in_executor(
+            executor,
+            run_sample_sync,
+            data, method, results_folder, lm_name, progress_tracker
+        )
+        
+        async with budget_lock:
+            remaining_budget[0] -= cost
+            total_cost += cost
+            if remaining_budget[0] <= 0.0:
+                break
+    
+    return total_cost
+
+async def run(
     data_ids: List[int],
     methods: List[Callable[[], operations.GraphOfOperations]],
     budget: float,
     lm_name: str,
 ) -> float:
-    """
-    Controller function that executes each specified method for each specified
-    sample while the budget is not exhausted.
-
-    :param data_ids: Indices of the sample to be run.
-    :type data_ids: List[int]
-    :param methods: List of functions to generate Graphs of Operations.
-    :type methods: Each function generates a Graph of Operation.
-    :param budget: Language model budget for the execution in dollars.
-    :type budget: float
-    :param lm_name: Name of the language model to be used.
-    :type lm_name: str
-    :return: Spent budget in dollars.
-    :rtype: float
-    """
-
+    """主控制器函数"""
     orig_budget = budget
+    remaining_budget = [budget]
+    
+    # 初始化进度跟踪器
+    progress_tracker = ProgressTracker(methods, len(data_ids) if data_ids else 50)
+    progress_tracker.initialize_progress_bars()
+    
+    # 初始化线程池，每个方法一个线程
+    executor = ThreadPoolExecutor(max_workers=len(methods))
+    
+    # 加载数据
     data_path = os.path.join(os.path.dirname(__file__), "documents.csv")
     data = []
     with open(data_path, "r", encoding="utf8") as f:
@@ -677,16 +791,17 @@ def run(
         data_ids = list(range(len(data)))
     selected_data = [data[i] for i in data_ids]
 
+    # 创建结果目录
     results_dir = os.path.join(os.path.dirname(__file__), "results")
-
-    if not os.path.exists(results_dir):
-        os.makedirs(results_dir)
+    os.makedirs(results_dir, exist_ok=True)
+    
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     extra_info = f"{lm_name}_{'-'.join([method.__name__ for method in methods])}"
     folder_name = f"{extra_info}_{timestamp}"
     results_folder = os.path.join(results_dir, folder_name)
     os.makedirs(results_folder)
 
+    # 保存配置
     config = {
         "data": selected_data,
         "methods": [method.__name__ for method in methods],
@@ -696,6 +811,7 @@ def run(
     with open(os.path.join(results_folder, "config.json"), "w") as f:
         json.dump(config, f)
 
+    # 配置日志
     logging.basicConfig(
         filename=os.path.join(results_folder, "log.log"),
         filemode="w",
@@ -703,96 +819,29 @@ def run(
         level=logging.DEBUG,
     )
 
-    # logging.basicConfig(
-    #     level=logging.DEBUG,
-    #     format="%(name)s - %(levelname)s - %(message)s",
-    #     handlers=[
-    #         logging.FileHandler(os.path.join(results_folder, "log.log"), mode='w'),
-    #         logging.StreamHandler(sys.stdout)
-    #     ]
-    # )
-
+    # 创建预算锁
+    budget_lock = asyncio.Lock()
+    
+    # 并行运行所有方法
+    method_tasks = []
     for method in methods:
-        os.makedirs(os.path.join(results_folder, method.__name__))
-
-    main_prossess = tqdm.tqdm(
-        selected_data,
-        desc="Processing documents",
-        position=0,
-        leave=True,
-        dynamic_ncols=True
-    )
-
-    for data in main_prossess:
-        main_prossess.set_postfix({"Buget": f"{budget:.2f}", "DocID": data[0]})
-        logging.info(f"Running data {data[0]}: {data[1]}")
-        if budget <= 0.0:
-            logging.error(
-                f"Budget has been depleted, stopping. Data {data[0]} has not been run."
-            )
-            break
-        for method in methods:
-            logging.info(f"Running method {method.__name__}")
-            logging.info(f"Budget left: {budget}")
-            if budget <= 0.0:
-                logging.error(
-                    f"Budget has been depleted, stopping. Method {method.__name__} has not been run."
-                )
-                break
-            lm = language_models.ChatGPT(
-                os.path.join(
-                    os.path.dirname(__file__),
-                    "../../graph_of_thoughts/language_models/config.json",
-                ),
-                model_name=lm_name,
-                cache=True,
-            )
-            operations_graph = method()
-            executor = controller.Controller(
-                lm,
-                operations_graph,
-                DocMergePrompter(),
-                DocMergeParser(),
-                {
-                    "documents": [data[2], data[3], data[4], data[5]],
-                    "parts": set(),
-                    "current": "",
-                    "method": method.__name__,
-                },
-            )
-            try:
-                executor.run()
-            except Exception as e:
-                logging.error(f"Exception: {e}")
-            path = os.path.join(
-                results_folder,
-                method.__name__,
-                f"{data[0]}.json",
-            )
-            for operation in operations_graph.operations:
-                for thought in operation.thoughts:
-                    thought.state["parts"] = list(thought.state["parts"])
-            executor.output_graph(path)
-            budget -= lm.cost
-
-    return orig_budget - budget
-
-def run_with_profiling(*args, **kwargs):
-    pr = cProfile.Profile()
-    pr.enable()
+        task = asyncio.create_task(
+            run_method(method, selected_data, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker)
+        )
+        method_tasks.append(task)
     
-    result = run(*args, **kwargs)  # 调用原始run函数
+    # 等待所有方法完成
+    method_costs = await asyncio.gather(*method_tasks)
     
-    pr.disable()
-    s = io.StringIO()
-    ps = pstats.Stats(pr, stream=s).sort_stats(SortKey.CUMULATIVE)
-    ps.print_stats()
+    # 清理资源
+    executor.shutdown(wait=True)
     
-    # 保存分析结果
-    with open('performance_profile.txt', 'w') as f:
-        f.write(s.getvalue())
+    # 关闭进度条
+    for bar in progress_tracker.progress_bars.values():
+        bar.close()
     
-    return result
+    total_cost = sum(method_costs)
+    return total_cost
 
 if __name__ == "__main__":
     """
@@ -804,6 +853,12 @@ if __name__ == "__main__":
     samples = [item for item in range(0, 50)]
     approaches = [direct_method, cot, tot, got, got2]
 
-    spent = run_with_profiling(samples, approaches, budget, "deepseek-vocano")
+    try:
+        # 运行主异步函数
+        spent = asyncio.run(run(samples, approaches, budget, "ollama-qwen2.5_1.5b"))
+        logging.info(f"Spent {spent} out of {budget} budget.")
+    except Exception as e:
+        logging.error(f"Fatal error in main execution: {e}")
+        raise
 
     logging.info(f"Spent {spent} out of {budget} budget.")

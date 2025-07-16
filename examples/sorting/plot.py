@@ -177,10 +177,10 @@ def plot_results(
 
 
 plot_results(
-    get_plotting_data("results/"),
+    get_plotting_data("examples/sorting/results/ollama-qwen2.5_7b_direct_method-cot-tot-tot2-got_2025-07-15_21-20-15"),
     length=32,
     display_solved=True,
-    model="GPT-3.5",
+    model="ollama-qwen2.5_1.5b",
     display_left_ylabel=True,
     display_right_ylabel=True,
 )

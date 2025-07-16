@@ -156,7 +156,7 @@ def plot_results(
 
 
 plot_results(
-    get_plotting_data("examples/keyword_counting/results/"),
+    get_plotting_data("examples/keyword_counting/results/doubao_direct_method-cot-tot-tot2-got4-got8-gotx_2025-07-15_21-17-05"),
     display_solved=True,
     annotation_offset=-0.3,
     model="deepseek-vocano",

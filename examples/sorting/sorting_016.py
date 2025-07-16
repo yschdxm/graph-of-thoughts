@@ -123,20 +123,20 @@ Input: {input}
 Incorrectly Sorted: {incorrectly_sorted}
 """
 
-    got_split_prompt = """<Instruction> Split the following list of 32 numbers into 2 lists of 16 numbers each, the first list should contain the first 16 numbers and the second list the second 16 numbers.
+    got_split_prompt = """<Instruction> Split the following list of 16 numbers into 2 lists of 8 numbers each, the first list should contain the first 8 numbers and the second list the second 8 numbers.
 Only output the final 2 lists in the following format without any additional text or thoughts!:
 {{
     "List 1": [3, 4, 3, 5, 7, 8, 1, ...],
     "List 2": [2, 9, 2, 4, 7, 1, 5, ...]
 }} </Instruction>
 
-<Example>
-Input: [9, 6, 7, 7, 2, 0, 2, 2, 3, 5, 0, 9, 2, 2, 4, 4, 5, 2, 5, 1, 2, 8, 3, 8, 3, 9, 6, 0, 4, 2, 2, 3]
+<Example>Input: [9, 6, 7, 7, 2, 0, 2, 2, 3, 5, 0, 9, 2, 2, 4, 4]
 Output: 
 {{
-    "List 1": [9, 6, 7, 7, 2, 0, 2, 2, 3, 5, 0, 9, 2, 2, 4, 4],
-    "List 2": [5, 2, 5, 1, 2, 8, 3, 8, 3, 9, 6, 0, 4, 2, 2, 3]
+    "List 1": [9, 6, 7, 7, 2, 0, 2, 2],
+    "List 2": [3, 5, 0, 9, 2, 2, 4, 4]
 }}
+
 </Example>
 
 Input: {input}"""
@@ -175,10 +175,10 @@ Merged list:
         len_input2 = len(utils.string_to_list(state_dicts[1]["current"]))
         if len_input1 == len_input2:
             length = len_input1
-        elif len_input1 + len_input2 - 32 <= 16:
-            length = 16
+        elif len_input1 + len_input2 - 16 <= 8:
+            length = 8
         else:
-            length = 32
+            length = 16
 
         return self.got_merge_prompt.format(
             input1=state_dicts[0]["current"],
@@ -732,7 +732,7 @@ async def run(
     executor = ThreadPoolExecutor(max_workers=len(methods))
     
     # 加载数据
-    data_path = os.path.join(os.path.dirname(__file__), "sorting_032.csv")
+    data_path = os.path.join(os.path.dirname(__file__), "sorting_016.csv")
     data = []
     with open(data_path, "r") as f:
         reader = csv.reader(f)
@@ -799,8 +799,8 @@ async def run(
 
 if __name__ == "__main__":
     """
-    Input (x)   : an unordered list of 32 numbers between 0 and 9 (inclusive)
-    Output (y)  : a sorted list of 32 numbers between 0 and 9 (inclusive)
+    Input (x)   : an unordered list of 16 numbers between 0 and 9 (inclusive)
+    Output (y)  : a sorted list of 16 numbers between 0 and 9 (inclusive)
     Correct     : y == sorted(x)
     Input Example:
         [0, 1, 9, 4, 2, 2, 0, 5, 1...]
@@ -813,7 +813,7 @@ if __name__ == "__main__":
 
     try:
         # 运行主异步函数
-        spent = asyncio.run(run(samples, approaches, budget, "ollama-qwen2.5_32b"))
+        spent = asyncio.run(run(samples, approaches, budget, "ollama-qwen2.5_7b"))
         logging.info(f"Spent {spent} out of {budget} budget.")
     except Exception as e:
         logging.error(f"Fatal error in main execution: {e}")
