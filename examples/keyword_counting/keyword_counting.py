@@ -1038,35 +1038,53 @@ class ProgressTracker:
     def __init__(self, methods, total_samples_per_method):
         self.methods = methods
         self.total_samples = total_samples_per_method
-        self.completed_samples = {method.__name__: 0 for method in methods}
-        self.lock = threading.Lock()
-        self.active_tasks = 0
-        self.progress_bars = {}
+        # 为每个方法创建独立的跟踪器
+        self.trackers = {
+            method.__name__: {
+                'completed': 0,
+                'active': 0,
+                'lock': threading.Lock(),
+                'bar': None
+            } for method in methods
+        }
         
-    def update_progress(self, method_name, increment=1):
-        with self.lock:
-            self.completed_samples[method_name] += increment
-            if method_name in self.progress_bars:
-                self.progress_bars[method_name].update(increment)
-                
-    def update_active_tasks(self, delta):
-        with self.lock:
-            self.active_tasks += delta
-            
     def initialize_progress_bars(self):
-        for method in self.methods:
-            self.progress_bars[method.__name__] = tqdm(
-                total=self.total_samples,
-                desc=f"{method.__name__} (0 active)",
-                position=list(self.methods).index(method),
-                leave=True
-            )
-            
+        for idx, method in enumerate(self.methods):
+            method_name = method.__name__
+            with self.trackers[method_name]['lock']:
+                self.trackers[method_name]['bar'] = tqdm(
+                    total=self.total_samples,
+                    desc=f"{method_name} (0 active)",
+                    position=idx,
+                    leave=True
+                )
+    
+    def update_progress(self, method_name, increment=1):
+        tracker = self.trackers[method_name]
+        with tracker['lock']:
+            tracker['completed'] += increment
+            tracker['bar'].update(increment)
+    
+    def update_active_tasks(self, method_name, delta):
+        tracker = self.trackers[method_name]
+        with tracker['lock']:
+            tracker['active'] += delta
+            # 完全重建描述字符串避免任何格式问题
+            new_desc = f"{method_name} ({tracker['active']} active)"
+            tracker['bar'].set_description(new_desc, refresh=True)
+    
+    def close_all(self):
+        for tracker in self.trackers.values():
+            with tracker['lock']:
+                if tracker['bar']:
+                    tracker['bar'].close()
+
     def refresh_display(self):
         with self.lock:
             for method_name, bar in self.progress_bars.items():
                 bar.set_description(f"{method_name} ({self.active_tasks} active)")
                 bar.refresh()
+
 
 def direct_method(all_potential_countries) -> operations.GraphOfOperations:
     """
@@ -1366,14 +1384,14 @@ def gotx(all_potential_countries) -> operations.GraphOfOperations:
 def run_sample_sync(data, method, results_folder, lm_name, progress_tracker, all_potential_countries):
     """同步版本的样本执行函数"""
     try:
-        progress_tracker.update_active_tasks(1)
-        progress_tracker.refresh_display()
+        progress_tracker.update_active_tasks(method.__name__, 1)  # Added delta=1
+        # progress_tracker.refresh_display()
         
         # 创建新的事件循环
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        lm = language_models.Ollama(
+        lm = language_models.ChatGPT(
             os.path.join(
                 os.path.dirname(__file__),
                 "../../graph_of_thoughts/language_models/config.json",
@@ -1409,22 +1427,50 @@ def run_sample_sync(data, method, results_folder, lm_name, progress_tracker, all
         logging.error(f"Exception in {method.__name__} for data {data[0]}: {e}")
         return 0
     finally:
-        progress_tracker.update_active_tasks(-1)
+        progress_tracker.update_active_tasks(method.__name__, -1)  # Added delta=-1
         progress_tracker.refresh_display()
         loop.close()
 
+
 async def run_method(method, selected_data, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker, all_potential_countries):
-    """运行单个方法的所有样本"""
+    """运行单个方法的所有样本，内部并行处理"""
     method_dir = os.path.join(results_folder, method.__name__)
     os.makedirs(method_dir, exist_ok=True)
     
-    total_cost = 0
-    
+    # 为每个数据样本创建任务
+    tasks = []
     for data in selected_data:
+        task = run_sample_async(
+            data, method, results_folder, lm_name, 
+            budget_lock, remaining_budget, executor, 
+            progress_tracker, all_potential_countries
+        )
+        tasks.append(task)
+    
+    # 限制并发数，避免过多并发导致资源耗尽
+    # 这里设置每个方法最多并行处理4个样本
+    semaphore = asyncio.Semaphore(4)
+    
+    async def limited_task(task):
+        async with semaphore:
+            return await task
+    
+    # 运行所有任务，限制并发
+    results = await asyncio.gather(*[limited_task(t) for t in tasks], return_exceptions=True)
+    
+    # 计算总成本
+    total_cost = sum(cost for cost in results if isinstance(cost, (int, float)))
+    return total_cost
+
+async def run_sample_async(data, method, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker, all_potential_countries):
+    """异步版本的样本执行函数"""
+    try:
+        progress_tracker.update_active_tasks(method.__name__, 1)  # Added delta=1
+        
+        # 检查预算
         async with budget_lock:
             if remaining_budget[0] <= 0.0:
-                logging.warning(f"Budget depleted, skipping remaining samples for {method.__name__}")
-                break
+                return 0
         
         # 在线程池中运行同步代码
         loop = asyncio.get_running_loop()
@@ -1434,13 +1480,20 @@ async def run_method(method, selected_data, results_folder, lm_name, budget_lock
             data, method, results_folder, lm_name, progress_tracker, all_potential_countries
         )
         
+        # 更新预算
         async with budget_lock:
             remaining_budget[0] -= cost
-            total_cost += cost
-            if remaining_budget[0] <= 0.0:
-                break
-    
-    return total_cost
+        
+        progress_tracker.update_progress(method.__name__)
+        return cost
+        
+    except Exception as e:
+        logging.error(f"Exception in {method.__name__} for data {data[0]}: {e}")
+        return 0
+    finally:
+        progress_tracker.update_active_tasks(method.__name__, -1)  # Added delta=-1
+
+
 
 async def run(
     data_ids: List[int],
@@ -1456,8 +1509,11 @@ async def run(
     progress_tracker = ProgressTracker(methods, len(data_ids) if data_ids else 100)
     progress_tracker.initialize_progress_bars()
     
-    # 初始化线程池，每个方法一个线程
-    executor = ThreadPoolExecutor(max_workers=len(methods))
+    # 初始化线程池，每个方法可以并行处理多个样本
+    # 这里我们设置线程池大小为方法数量乘以每个方法的并行样本数
+    # 例如，假设每个方法可以并行处理4个样本
+    max_workers = len(methods) * 4
+    executor = ThreadPoolExecutor(max_workers=max_workers)
     
     # 加载数据
     data_path = os.path.join(os.path.dirname(__file__), "countries.csv")
@@ -1529,6 +1585,7 @@ async def run(
     return total_cost
 
 
+
 if __name__ == "__main__":
     """
     Input (x)   : an input text with many occurrences of different countries (names)
@@ -1545,7 +1602,7 @@ if __name__ == "__main__":
 
     try:
         # 运行主异步函数
-        spent = asyncio.run(run(samples, approaches, budget, "ollama-qwen2.5_72b"))
+        spent = asyncio.run(run(samples, approaches, budget, "ollama_chatgpt-qwen2.5_32b"))
         logging.info(f"Spent {spent} out of {budget} budget.")
     except Exception as e:
         logging.error(f"Fatal error in main execution: {e}")
