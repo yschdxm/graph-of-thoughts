@@ -177,10 +177,10 @@ def plot_results(
 
 
 plot_results(
-    get_plotting_data("examples/sorting/results/ollama-qwen2.5_7b_direct_method-cot-tot-tot2-got_2025-07-15_21-20-15"),
+    get_plotting_data("examples/sorting/results/qwen-turbo_direct_method-cot-tot-tot2-got_2025-07-17_11-29-45"),
     length=32,
     display_solved=True,
-    model="ollama-qwen2.5_1.5b",
+    model="qwen-turbo",
     display_left_ylabel=True,
     display_right_ylabel=True,
 )

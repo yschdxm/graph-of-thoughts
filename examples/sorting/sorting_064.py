@@ -472,48 +472,49 @@ class SortingParser(parser.Parser):
         pass
 
 class ProgressTracker:
-    def __init__(self, methods, total_samples_per_method):
+    def __init__(self, methods: List[Callable], total_samples: int):
         self.methods = methods
-        self.total_samples = total_samples_per_method
-        self.trackers = {
-            method.__name__: {
-                'completed': 0,
-                'active': 0,
-                'lock': threading.Lock(),
-                'bar': None
-            } for method in methods
-        }
+        self.total_samples = total_samples
+        self.progress_bars = {}
+        self.active_tasks = {}
+        self.completed_samples = {}
+        self.lock = threading.Lock()
         
     def initialize_progress_bars(self):
-        for idx, method in enumerate(self.methods):
+        for method in self.methods:
             method_name = method.__name__
-            with self.trackers[method_name]['lock']:
-                self.trackers[method_name]['bar'] = tqdm(
-                    total=self.total_samples,
-                    desc=f"{method_name} (0 active)",
-                    position=idx,
-                    leave=True
-                )
-    
-    def update_progress(self, method_name, increment=1):
-        tracker = self.trackers[method_name]
-        with tracker['lock']:
-            tracker['completed'] += increment
-            tracker['bar'].update(increment)
-    
-    def update_active_tasks(self, method_name, delta):
-        tracker = self.trackers[method_name]
-        with tracker['lock']:
-            tracker['active'] += delta
-            new_desc = f"{method_name} ({tracker['active']} active)"
-            tracker['bar'].set_description(new_desc, refresh=True)
-    
+            self.progress_bars[method_name] = tqdm(
+                total=self.total_samples,
+                desc=f"{method_name: <12}",
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} ({elapsed}/{remaining}) [Active: {postfix[0][active]:<3}]',
+                postfix=[{'active': 0}]
+            )
+            self.active_tasks[method_name] = 0
+            self.completed_samples[method_name] = 0
+            
+    def update_progress(self, method_name: str):
+        with self.lock:
+            if method_name in self.progress_bars:
+                self.completed_samples[method_name] += 1
+                self.progress_bars[method_name].n = self.completed_samples[method_name]
+                self._update_active_display(method_name)
+                self.progress_bars[method_name].refresh()
+                
+    def update_active_tasks(self, method_name: str, delta: int):
+        with self.lock:
+            if method_name in self.active_tasks:
+                self.active_tasks[method_name] += delta
+                self.active_tasks[method_name] = max(0, self.active_tasks[method_name])
+                self._update_active_display(method_name)
+                
+    def _update_active_display(self, method_name: str):
+        if method_name in self.progress_bars:
+            self.progress_bars[method_name].postfix[0]['active'] = self.active_tasks[method_name]
+            self.progress_bars[method_name].refresh()
+            
     def close_all(self):
-        for tracker in self.trackers.values():
-            with tracker['lock']:
-                if tracker['bar']:
-                    tracker['bar'].close()
-
+        for bar in self.progress_bars.values():
+            bar.close()
 
 def direct_method() -> operations.GraphOfOperations:
     """
@@ -704,11 +705,9 @@ def got() -> operations.GraphOfOperations:
 
 
 def run_sample_sync(data, method, results_folder, lm_name, progress_tracker):
-    """Synchronous version of sample execution function"""
     try:
         progress_tracker.update_active_tasks(method.__name__, 1)
         
-        # Create new event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
@@ -718,6 +717,7 @@ def run_sample_sync(data, method, results_folder, lm_name, progress_tracker):
                 "../../graph_of_thoughts/language_models/config.json",
             ),
             model_name=lm_name,
+            cache=True,
         )
         operations_graph = method()
         executor = controller.Controller(
@@ -736,7 +736,7 @@ def run_sample_sync(data, method, results_folder, lm_name, progress_tracker):
         path = os.path.join(
             results_folder,
             method.__name__,
-            f"{data[0].json}",
+            f"{data[0]}.json",
         )
         executor.output_graph(path)
         
@@ -751,11 +751,9 @@ def run_sample_sync(data, method, results_folder, lm_name, progress_tracker):
         loop.close()
 
 async def run_method(method, selected_data, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker):
-    """Run all samples for a single method with internal parallel processing"""
     method_dir = os.path.join(results_folder, method.__name__)
     os.makedirs(method_dir, exist_ok=True)
     
-    # Create tasks for each data sample
     tasks = []
     for data in selected_data:
         task = run_sample_async(
@@ -765,31 +763,23 @@ async def run_method(method, selected_data, results_folder, lm_name, budget_lock
         )
         tasks.append(task)
     
-    # Limit concurrency to avoid resource exhaustion
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(THREADS)  # 限制并发数
     
     async def limited_task(task):
         async with semaphore:
             return await task
     
-    # Run all tasks with limited concurrency
     results = await asyncio.gather(*[limited_task(t) for t in tasks], return_exceptions=True)
     
-    # Calculate total cost
     total_cost = sum(cost for cost in results if isinstance(cost, (int, float)))
     return total_cost
 
 async def run_sample_async(data, method, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker):
-    """Asynchronous version of sample execution function"""
     try:
-        progress_tracker.update_active_tasks(method.__name__, 1)
-        
-        # Check budget
         async with budget_lock:
             if remaining_budget[0] <= 0.0:
                 return 0
         
-        # Run synchronous code in thread pool
         loop = asyncio.get_running_loop()
         cost = await loop.run_in_executor(
             executor,
@@ -797,38 +787,30 @@ async def run_sample_async(data, method, results_folder, lm_name, budget_lock, r
             data, method, results_folder, lm_name, progress_tracker
         )
         
-        # Update budget
         async with budget_lock:
             remaining_budget[0] -= cost
         
-        progress_tracker.update_progress(method.__name__)
         return cost
         
     except Exception as e:
         logging.error(f"Exception in {method.__name__} for data {data[0]}: {e}")
         return 0
-    finally:
-        progress_tracker.update_active_tasks(method.__name__, -1)
 
 async def run(
     data_ids: List[int],
-    methods: List[Callable[[], operations.GraphOfOperations]],
+    methods: List[Callable[[], operations.GGraphOfOperations]],
     budget: float,
     lm_name: str,
 ) -> float:
-    """Main controller function"""
     orig_budget = budget
     remaining_budget = [budget]
     
-    # Initialize progress tracker
     progress_tracker = ProgressTracker(methods, len(data_ids) if data_ids else 100)
     progress_tracker.initialize_progress_bars()
     
-    # Initialize thread pool
-    max_workers = len(methods) * 4
+    max_workers = len(methods) * THREADS
     executor = ThreadPoolExecutor(max_workers=max_workers)
     
-    # Load data
     data_path = os.path.join(os.path.dirname(__file__), "sorting_064.csv")
     data = []
     with open(data_path, "r") as f:
@@ -841,7 +823,6 @@ async def run(
         data_ids = list(range(len(data)))
     selected_data = [data[i] for i in data_ids]
 
-    # Create results directory
     results_dir = os.path.join(os.path.dirname(__file__), "results")
     os.makedirs(results_dir, exist_ok=True)
     
@@ -851,7 +832,6 @@ async def run(
     results_folder = os.path.join(results_dir, folder_name)
     os.makedirs(results_folder)
 
-    # Save config
     config = {
         "data": selected_data,
         "methods": [method.__name__ for method in methods],
@@ -861,7 +841,6 @@ async def run(
     with open(os.path.join(results_folder, "config.json"), "w") as f:
         json.dump(config, f)
 
-    # Configure logging
     logging.basicConfig(
         filename=os.path.join(results_folder, "log.log"),
         filemode="w",
@@ -869,10 +848,8 @@ async def run(
         level=logging.DEBUG,
     )
 
-    # Create budget lock
     budget_lock = asyncio.Lock()
     
-    # Run all methods in parallel
     method_tasks = []
     for method in methods:
         task = asyncio.create_task(
@@ -880,13 +857,10 @@ async def run(
         )
         method_tasks.append(task)
     
-    # Wait for all methods to complete
     method_costs = await asyncio.gather(*method_tasks)
     
-    # Clean up resources
     executor.shutdown(wait=True)
     
-    # Close progress bars
     progress_tracker.close_all()
     
     total_cost = sum(method_costs)
@@ -906,11 +880,11 @@ if __name__ == "__main__":
     budget = 30
     samples = [item for item in range(0, 100)]
     approaches = [direct_method, cot, tot, tot2, got]
+    THREADS = 4
 
     try:
-        # Run main async function
-        spent = asyncio.run(run(samples, approaches, budget, "doubao"))
+        spent = asyncio.run(run(samples, approaches, budget, "chatgpt"))
         logging.info(f"Spent {spent} out of {budget} budget.")
     except Exception as e:
         logging.error(f"Fatal error in main execution: {e}")
-        raise
+        raise e

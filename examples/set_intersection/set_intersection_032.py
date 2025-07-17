@@ -451,47 +451,72 @@ class SetIntersectionParser(parser.Parser):
         pass
 
 class ProgressTracker:
-    def __init__(self, methods, total_samples_per_method):
+    def __init__(self, methods: List[Callable], total_samples: int):
+        """
+        初始化进度跟踪器
+        
+        :param methods: 要跟踪的方法列表
+        :param total_samples: 总样本数
+        """
         self.methods = methods
-        self.total_samples = total_samples_per_method
-        self.trackers = {
-            method.__name__: {
-                'completed': 0,
-                'active': 0,
-                'lock': threading.Lock(),
-                'bar': None
-            } for method in methods
-        }
+        self.total_samples = total_samples
+        self.progress_bars = {}
+        self.active_tasks = {}
+        self.completed_samples = {}  # 新增：实际完成样本计数
+        self.lock = threading.Lock()
         
     def initialize_progress_bars(self):
-        for idx, method in enumerate(self.methods):
+        """初始化进度条，每个方法一个"""
+        for method in self.methods:
             method_name = method.__name__
-            with self.trackers[method_name]['lock']:
-                self.trackers[method_name]['bar'] = tqdm(
-                    total=self.total_samples,
-                    desc=f"{method_name} (0 active)",
-                    position=idx,
-                    leave=True
-                )
-    
-    def update_progress(self, method_name, increment=1):
-        tracker = self.trackers[method_name]
-        with tracker['lock']:
-            tracker['completed'] += increment
-            tracker['bar'].update(increment)
-    
-    def update_active_tasks(self, method_name, delta):
-        tracker = self.trackers[method_name]
-        with tracker['lock']:
-            tracker['active'] += delta
-            new_desc = f"{method_name} ({tracker['active']} active)"
-            tracker['bar'].set_description(new_desc, refresh=True)
-    
+            # 设置总数为总样本数
+            self.progress_bars[method_name] = tqdm(
+                total=self.total_samples,
+                desc=f"{method_name: <13}",
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} ({elapsed}/{remaining}) [Active: {postfix[0][active]:<3}]',
+                postfix=[{'active': 0}]
+            )
+            self.active_tasks[method_name] = 0
+            self.completed_samples[method_name] = 0  # 初始化完成样本计数
+            
+    def update_progress(self, method_name: str):
+        """
+        更新进度（样本完成时调用）
+        
+        :param method_name: 方法名称
+        """
+        with self.lock:
+            if method_name in self.progress_bars:
+                # 增加实际完成样本计数
+                self.completed_samples[method_name] += 1
+                # 更新进度条为实际完成数
+                self.progress_bars[method_name].n = self.completed_samples[method_name]
+                self._update_active_display(method_name)
+                self.progress_bars[method_name].refresh()
+                
+    def update_active_tasks(self, method_name: str, delta: int):
+        """
+        更新活跃任务数
+        
+        :param method_name: 方法名称
+        :param delta: 变化量（+1/-1）
+        """
+        with self.lock:
+            if method_name in self.active_tasks:
+                self.active_tasks[method_name] += delta
+                self.active_tasks[method_name] = max(0, self.active_tasks[method_name])
+                self._update_active_display(method_name)
+                
+    def _update_active_display(self, method_name: str):
+        """更新进度条显示"""
+        if method_name in self.progress_bars:
+            self.progress_bars[method_name].postfix[0]['active'] = self.active_tasks[method_name]
+            self.progress_bars[method_name].refresh()
+            
     def close_all(self):
-        for tracker in self.trackers.values():
-            with tracker['lock']:
-                if tracker['bar']:
-                    tracker['bar'].close()
+        """关闭所有进度条"""
+        for bar in self.progress_bars.values():
+            bar.close()
 
 def direct_method() -> operations.GraphOfOperations:
     """
@@ -631,6 +656,7 @@ def got() -> operations.GraphOfOperations:
 
     return operations_graph
 
+
 def run_sample_sync(data, method, results_folder, lm_name, progress_tracker):
     """Synchronous version of sample execution function"""
     try:
@@ -696,7 +722,7 @@ async def run_method(method, selected_data, results_folder, lm_name, budget_lock
         tasks.append(task)
     
     # Limit concurrency to avoid resource exhaustion
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(THREDS)
     
     async def limited_task(task):
         async with semaphore:
@@ -712,7 +738,6 @@ async def run_method(method, selected_data, results_folder, lm_name, budget_lock
 async def run_sample_async(data, method, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker):
     """Asynchronous version of sample execution function"""
     try:
-        progress_tracker.update_active_tasks(method.__name__, 1)
         
         # Check budget
         async with budget_lock:
@@ -731,14 +756,11 @@ async def run_sample_async(data, method, results_folder, lm_name, budget_lock, r
         async with budget_lock:
             remaining_budget[0] -= cost
         
-        progress_tracker.update_progress(method.__name__)
         return cost
         
     except Exception as e:
         logging.error(f"Exception in {method.__name__} for data {data[0]}: {e}")
         return 0
-    finally:
-        progress_tracker.update_active_tasks(method.__name__, -1)
 
 async def run(
     data_ids: List[int],
@@ -755,7 +777,7 @@ async def run(
     progress_tracker.initialize_progress_bars()
     
     # Initialize thread pool
-    max_workers = len(methods) * 4
+    max_workers = len(methods) * THREDS
     executor = ThreadPoolExecutor(max_workers=max_workers)
     
     # Load data
@@ -822,7 +844,6 @@ async def run(
     total_cost = sum(method_costs)
     return total_cost
 
-
 if __name__ == "__main__":
     """
     Input(x)  : a list of 32 numbers between 0 and 63 (inclusive)
@@ -835,16 +856,15 @@ if __name__ == "__main__":
     Output Example:
         [24, 10, 20, 8]
     """
-
-if __name__ == "__main__":
-    budget = 30
+    budget = 15
     samples = [item for item in range(0, 100)]
     approaches = [direct_method, cot, tot, tot2, got]
+    THREDS = 4
 
     try:
         # Run main async function
-        spent = asyncio.run(run(samples, approaches, budget, "doubao-1.5-pro-32k"))
+        spent = asyncio.run(run(samples, approaches, budget, "doubao-lite-32k"))
         logging.info(f"Spent {spent} out of {budget} budget.")
     except Exception as e:
         logging.error(f"Fatal error in main execution: {e}")
-        raise
+        raise e

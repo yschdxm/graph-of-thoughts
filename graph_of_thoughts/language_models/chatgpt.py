@@ -59,7 +59,9 @@ class ChatGPT(AbstractLanguageModel):
         # Initialize clients
         client_kwargs = {
             "api_key": self.api_key,
-            "organization": self.organization
+            "organization": self.organization,
+            "timeout": 3600,
+            "max_retries": 1000,
         }
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
@@ -156,27 +158,35 @@ class ChatGPT(AbstractLanguageModel):
     ) -> Dict:
         """Internal method for async API calls"""
         async with semaphore:
-            response = await self.async_client.chat.completions.create(
+            try:
+                response = await self.async_client.chat.completions.create(
+                    model=self.model_id,
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    n=1,  # We handle multiple responses at a higher level
+                    stop=self.stop,
+                )
+                return response
+            except OpenAIError as e:
+                self.logger.error(f"Error in async_chat_completion: {e}")
+                raise e
+
+    def _chat_completion(self, messages: List[Dict]) -> Dict:
+        """Internal method for synchronous API calls"""
+        try:
+            response = self.client.chat.completions.create(
                 model=self.model_id,
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                n=1,  # We handle multiple responses at a higher level
+                n=1,
                 stop=self.stop,
             )
             return response
-
-    def _chat_completion(self, messages: List[Dict]) -> Dict:
-        """Internal method for synchronous API calls"""
-        response = self.client.chat.completions.create(
-            model=self.model_id,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            n=1,
-            stop=self.stop,
-        )
-        return response
+        except OpenAIError as e:
+            self.logger.error(f"Error in chat_completion: {e}")
+            raise e
 
     def _update_token_usage(self, responses: List[Dict]) -> None:
         """Update token usage statistics from responses"""
