@@ -862,7 +862,7 @@ if __name__ == "__main__":
     THREADS = 5
 
     try:
-        spent = asyncio.run(run(samples, approaches, budget, "chatgpt"))
+        spent = asyncio.run(run(samples, approaches, budget, "deepseek-vocano"))
         logging.info(f"Spent {spent} out of {budget} budget.")
     except Exception as e:
         logging.error(f"Fatal error in main execution: {e}")

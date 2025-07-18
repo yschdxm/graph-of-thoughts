@@ -6,14 +6,11 @@
 #
 # main author: Nils Blach
 
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import os
 import logging
 import datetime
 import json
 import csv
-import threading
 from typing import Dict, List, Callable, Union
 
 from tqdm import tqdm
@@ -123,23 +120,19 @@ Input: {input}
 Incorrectly Sorted: {incorrectly_sorted}
 """
 
-    got_split_prompt = """<Instruction> Split the following list of 64 numbers into 4 lists of 16 numbers each, the first list should contain the first 16 numbers, the second list the second 16 numbers, the third list the third 16 numbers and the fourth list the fourth 16 numbers.
-Only output the final 4 lists in the following format without any additional text or thoughts!:
+    got_split_prompt = """<Instruction> Split the following list of 32 numbers into 2 lists of 16 numbers each, the first list should contain the first 16 numbers and the second list the second 16 numbers.
+Only output the final 2 lists in the following format without any additional text or thoughts!:
 {{
     "List 1": [3, 4, 3, 5, 7, 8, 1, ...],
-    "List 2": [2, 9, 2, 4, 7, 1, 5, ...],
-    "List 3": [6, 9, 8, 1, 9, 2, 4, ...],
-    "List 4": [9, 0, 7, 6, 5, 6, 6, ...]
+    "List 2": [2, 9, 2, 4, 7, 1, 5, ...]
 }} </Instruction>
 
 <Example>
-Input: [3, 1, 9, 3, 7, 5, 5, 4, 8, 1, 5, 3, 3, 2, 3, 0, 9, 7, 2, 2, 4, 4, 8, 5, 0, 8, 7, 3, 3, 8, 7, 0, 9, 5, 1, 6, 7, 6, 8, 9, 0, 3, 0, 6, 3, 4, 8, 0, 6, 9, 8, 4, 1, 2, 9, 0, 4, 8, 8, 9, 9, 8, 5, 9]
+Input: [9, 6, 7, 7, 2, 0, 2, 2, 3, 5, 0, 9, 2, 2, 4, 4, 5, 2, 5, 1, 2, 8, 3, 8, 3, 9, 6, 0, 4, 2, 2, 3]
 Output: 
 {{
-    "List 1": [3, 1, 9, 3, 7, 5, 5, 4, 8, 1, 5, 3, 3, 2, 3, 0],
-    "List 2": [9, 7, 2, 2, 4, 4, 8, 5, 0, 8, 7, 3, 3, 8, 7, 0],
-    "List 3": [9, 5, 1, 6, 7, 6, 8, 9, 0, 3, 0, 6, 3, 4, 8, 0],
-    "List 4": [6, 9, 8, 4, 1, 2, 9, 0, 4, 8, 8, 9, 9, 8, 5, 9]
+    "List 1": [9, 6, 7, 7, 2, 0, 2, 2, 3, 5, 0, 9, 2, 2, 4, 4],
+    "List 2": [5, 2, 5, 1, 2, 8, 3, 8, 3, 9, 6, 0, 4, 2, 2, 3]
 }}
 </Example>
 
@@ -211,7 +204,6 @@ Merged list:
         :raise AssertionError: If the requested number of branches is not one.
         """
 
-        assert num_branches == 1, "Branching should be done via multiple requests."
         if current is None or current == "":
             input = original
         else:
@@ -372,13 +364,12 @@ class SortingParser(parser.Parser):
             if state["method"] == "got" and state["current"] == "":
                 # We expect a json which contains the four lists named "List 1" to "List 4"
                 # cut everything until the opening bracket and everything after the closing bracket
-
                 try:
                     text = text[text.index("{") : text.index("}") + 1]
                     json_dict = json.loads(text)
-                    if len(json_dict.keys()) != 4:
+                    if len(json_dict.keys()) != 2:
                         logging.warning(
-                            f"Expected 4 lists in json, but found {len(json_dict.keys())}."
+                            f"Expected 2 lists in json, but found {len(json_dict.keys())}."
                         )
                     for key, value in json_dict.items():
                         if "List" not in key:
@@ -471,50 +462,6 @@ class SortingParser(parser.Parser):
         """
         pass
 
-class ProgressTracker:
-    def __init__(self, methods: List[Callable], total_samples: int):
-        self.methods = methods
-        self.total_samples = total_samples
-        self.progress_bars = {}
-        self.active_tasks = {}
-        self.completed_samples = {}
-        self.lock = threading.Lock()
-        
-    def initialize_progress_bars(self):
-        for method in self.methods:
-            method_name = method.__name__
-            self.progress_bars[method_name] = tqdm(
-                total=self.total_samples,
-                desc=f"{method_name: <12}",
-                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} ({elapsed}/{remaining}) [Active: {postfix[0][active]:<3}]',
-                postfix=[{'active': 0}]
-            )
-            self.active_tasks[method_name] = 0
-            self.completed_samples[method_name] = 0
-            
-    def update_progress(self, method_name: str):
-        with self.lock:
-            if method_name in self.progress_bars:
-                self.completed_samples[method_name] += 1
-                self.progress_bars[method_name].n = self.completed_samples[method_name]
-                self._update_active_display(method_name)
-                self.progress_bars[method_name].refresh()
-                
-    def update_active_tasks(self, method_name: str, delta: int):
-        with self.lock:
-            if method_name in self.active_tasks:
-                self.active_tasks[method_name] += delta
-                self.active_tasks[method_name] = max(0, self.active_tasks[method_name])
-                self._update_active_display(method_name)
-                
-    def _update_active_display(self, method_name: str):
-        if method_name in self.progress_bars:
-            self.progress_bars[method_name].postfix[0]['active'] = self.active_tasks[method_name]
-            self.progress_bars[method_name].refresh()
-            
-    def close_all(self):
-        for bar in self.progress_bars.values():
-            bar.close()
 
 def direct_method() -> operations.GraphOfOperations:
     """
@@ -563,7 +510,7 @@ def tot() -> operations.GraphOfOperations:
     keep_best_1 = operations.KeepBestN(1, False)
     operations_graph.append_operation(keep_best_1)
 
-    for _ in range(3):
+    for _ in range(1):
         operations_graph.append_operation(operations.Generate(1, 20))
         operations_graph.append_operation(operations.Score(1, False, utils.num_errors))
         keep_best_2 = operations.KeepBestN(1, False)
@@ -592,7 +539,7 @@ def tot2() -> operations.GraphOfOperations:
     keep_best_1 = operations.KeepBestN(1, False)
     operations_graph.append_operation(keep_best_1)
 
-    for _ in range(6):
+    for _ in range(2):
         operations_graph.append_operation(operations.Generate(1, 10))
         operations_graph.append_operation(operations.Score(1, False, utils.num_errors))
         keep_best_2 = operations.KeepBestN(1, False)
@@ -600,11 +547,7 @@ def tot2() -> operations.GraphOfOperations:
         operations_graph.append_operation(keep_best_2)
         keep_best_1 = keep_best_2
 
-        operations_graph.append_operation(operations.KeepBestN(1, False))
-        operations_graph.append_operation(operations.KeepBestN(1, False))
-
     operations_graph.append_operation(operations.KeepBestN(1, False))
-
     operations_graph.append_operation(operations.GroundTruth(utils.test_sorting))
 
     return operations_graph
@@ -621,8 +564,7 @@ def got() -> operations.GraphOfOperations:
 
     plans = operations.Generate(1, 1)
     operations_graph.append_operation(plans)  # generate the sublists
-    sorted_sublists = []
-    for i in range(1, 5):
+    for i in range(1, 3):
         list_id = f"List {i}"
         sub_list = operations.Selector(
             lambda thoughts, list_id=list_id: [
@@ -641,52 +583,6 @@ def got() -> operations.GraphOfOperations:
         keep_best_sub_list.add_predecessor(score_sub_list)
         operations_graph.add_operation(keep_best_sub_list)
 
-        sorted_sublists.append(keep_best_sub_list)
-
-    aggregate_1 = operations.Aggregate(10)
-    aggregate_1.add_predecessor(sorted_sublists[0])
-    aggregate_1.add_predecessor(sorted_sublists[1])
-    operations_graph.add_operation(aggregate_1)
-    score_aggregate_1 = operations.Score(1, False, utils.num_errors)
-    score_aggregate_1.add_predecessor(aggregate_1)
-    operations_graph.add_operation(score_aggregate_1)
-    keep_best_aggregate_1 = operations.KeepBestN(1, False)
-    keep_best_aggregate_1.add_predecessor(score_aggregate_1)
-    operations_graph.add_operation(keep_best_aggregate_1)
-
-    improve_aggregate_1 = operations.Generate(1, 5)
-    improve_aggregate_1.add_predecessor(keep_best_aggregate_1)
-    operations_graph.add_operation(improve_aggregate_1)
-    improve_score_aggregate_1 = operations.Score(1, False, utils.num_errors)
-    improve_score_aggregate_1.add_predecessor(improve_aggregate_1)
-    improve_score_aggregate_1.add_predecessor(keep_best_aggregate_1)
-    operations_graph.add_operation(improve_score_aggregate_1)
-    improve_keep_best_aggregate_1 = operations.KeepBestN(1, False)
-    improve_keep_best_aggregate_1.add_predecessor(improve_score_aggregate_1)
-    operations_graph.add_operation(improve_keep_best_aggregate_1)
-
-    aggregate_2 = operations.Aggregate(10)
-    aggregate_2.add_predecessor(sorted_sublists[2])
-    aggregate_2.add_predecessor(sorted_sublists[3])
-    operations_graph.add_operation(aggregate_2)
-    score_aggregate_2 = operations.Score(1, False, utils.num_errors)
-    score_aggregate_2.add_predecessor(aggregate_2)
-    operations_graph.add_operation(score_aggregate_2)
-    keep_best_aggregate_2 = operations.KeepBestN(1, False)
-    keep_best_aggregate_2.add_predecessor(score_aggregate_2)
-    operations_graph.add_operation(keep_best_aggregate_2)
-
-    improve_aggregate_2 = operations.Generate(1, 5)
-    improve_aggregate_2.add_predecessor(keep_best_aggregate_2)
-    operations_graph.add_operation(improve_aggregate_2)
-    improve_score_aggregate_2 = operations.Score(1, False, utils.num_errors)
-    improve_score_aggregate_2.add_predecessor(improve_aggregate_2)
-    improve_score_aggregate_2.add_predecessor(keep_best_aggregate_2)
-    operations_graph.add_operation(improve_score_aggregate_2)
-    improve_keep_best_aggregate_2 = operations.KeepBestN(1, False)
-    improve_keep_best_aggregate_2.add_predecessor(improve_score_aggregate_2)
-    operations_graph.add_operation(improve_keep_best_aggregate_2)
-
     final_aggregate = operations.Aggregate(10)
     operations_graph.append_operation(final_aggregate)
     operations_graph.append_operation(operations.Score(1, False, utils.num_errors))
@@ -704,114 +600,30 @@ def got() -> operations.GraphOfOperations:
     return operations_graph
 
 
-def run_sample_sync(data, method, results_folder, lm_name, progress_tracker):
-    try:
-        progress_tracker.update_active_tasks(method.__name__, 1)
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        lm = language_models.ChatGPT(
-            os.path.join(
-                os.path.dirname(__file__),
-                "../../graph_of_thoughts/language_models/config.json",
-            ),
-            model_name=lm_name,
-            cache=True,
-        )
-        operations_graph = method()
-        executor = controller.Controller(
-            lm,
-            operations_graph,
-            SortingPrompter(),
-            SortingParser(),
-            {
-                "original": data[1],
-                "current": "",
-                "phase": 0,
-                "method": method.__name__,
-            },
-        )
-        executor.run()
-        path = os.path.join(
-            results_folder,
-            method.__name__,
-            f"{data[0]}.json",
-        )
-        executor.output_graph(path)
-        
-        progress_tracker.update_progress(method.__name__)
-        return lm.cost
-        
-    except Exception as e:
-        logging.error(f"Exception in {method.__name__} for data {data[0]}: {e}")
-        return 0
-    finally:
-        progress_tracker.update_active_tasks(method.__name__, -1)
-        loop.close()
-
-async def run_method(method, selected_data, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker):
-    method_dir = os.path.join(results_folder, method.__name__)
-    os.makedirs(method_dir, exist_ok=True)
-    
-    tasks = []
-    for data in selected_data:
-        task = run_sample_async(
-            data, method, results_folder, lm_name, 
-            budget_lock, remaining_budget, executor, 
-            progress_tracker
-        )
-        tasks.append(task)
-    
-    semaphore = asyncio.Semaphore(THREADS)  # 限制并发数
-    
-    async def limited_task(task):
-        async with semaphore:
-            return await task
-    
-    results = await asyncio.gather(*[limited_task(t) for t in tasks], return_exceptions=True)
-    
-    total_cost = sum(cost for cost in results if isinstance(cost, (int, float)))
-    return total_cost
-
-async def run_sample_async(data, method, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker):
-    try:
-        async with budget_lock:
-            if remaining_budget[0] <= 0.0:
-                return 0
-        
-        loop = asyncio.get_running_loop()
-        cost = await loop.run_in_executor(
-            executor,
-            run_sample_sync,
-            data, method, results_folder, lm_name, progress_tracker
-        )
-        
-        async with budget_lock:
-            remaining_budget[0] -= cost
-        
-        return cost
-        
-    except Exception as e:
-        logging.error(f"Exception in {method.__name__} for data {data[0]}: {e}")
-        return 0
-
-async def run(
+def run(
     data_ids: List[int],
     methods: List[Callable[[], operations.GraphOfOperations]],
     budget: float,
     lm_name: str,
 ) -> float:
+    """
+    Controller function that executes each specified method for each specified
+    sample while the budget is not exhausted.
+
+    :param data_ids: Indices of the sample to be run.
+    :type data_ids: List[int]
+    :param methods: List of functions to generate Graphs of Operations.
+    :type methods: Each function generates a Graph of Operation.
+    :param budget: Language model budget for the execution in dollars.
+    :type budget: float
+    :param lm_name: Name of the language model to be used.
+    :type lm_name: str
+    :return: Spent budget in dollars.
+    :rtype: float
+    """
+
     orig_budget = budget
-    remaining_budget = [budget]
-    
-    progress_tracker = ProgressTracker(methods, len(data_ids) if data_ids else 100)
-    progress_tracker.initialize_progress_bars()
-    
-    max_workers = len(methods) * THREADS
-    executor = ThreadPoolExecutor(max_workers=max_workers)
-    
-    data_path = os.path.join(os.path.dirname(__file__), "sorting_064.csv")
+    data_path = os.path.join(os.path.dirname(__file__), "sorting_032.csv")
     data = []
     with open(data_path, "r") as f:
         reader = csv.reader(f)
@@ -824,8 +636,9 @@ async def run(
     selected_data = [data[i] for i in data_ids]
 
     results_dir = os.path.join(os.path.dirname(__file__), "results")
-    os.makedirs(results_dir, exist_ok=True)
-    
+
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     extra_info = f"{lm_name}_{'-'.join([method.__name__ for method in methods])}"
     folder_name = f"{extra_info}_{timestamp}"
@@ -848,29 +661,69 @@ async def run(
         level=logging.DEBUG,
     )
 
-    budget_lock = asyncio.Lock()
-    
-    method_tasks = []
     for method in methods:
-        task = asyncio.create_task(
-            run_method(method, selected_data, results_folder, lm_name, budget_lock, remaining_budget, executor, progress_tracker)
-        )
-        method_tasks.append(task)
-    
-    method_costs = await asyncio.gather(*method_tasks)
-    
-    executor.shutdown(wait=True)
-    
-    progress_tracker.close_all()
-    
-    total_cost = sum(method_costs)
-    return total_cost
+        os.makedirs(os.path.join(results_folder, method.__name__))
+
+    # 添加主进度条
+    with tqdm(total=len(selected_data) * len(methods), desc="Overall Progress") as pbar:
+        for data in selected_data:
+            logging.info(f"Running data {data[0]}: {data[1]}")
+            if budget <= 0.0:
+                logging.error(
+                    f"Budget has been depleted, stopping. Data {data[0]} has not been run."
+                )
+                break
+                
+            # 为每个方法添加进度条
+            for method in tqdm(methods, desc=f"Methods for data {data[0]}", leave=False):
+                logging.info(f"Running method {method.__name__}")
+                logging.info(f"Budget left: {budget}")
+                if budget <= 0.0:
+                    logging.error(
+                        f"Budget has been depleted, stopping. Method {method.__name__} has not been run."
+                    )
+                    break
+                lm = language_models.ChatGPT(
+                    os.path.join(
+                        os.path.dirname(__file__),
+                        "../../graph_of_thoughts/language_models/config.json",
+                    ),
+                    model_name=lm_name,
+                    cache=True,
+                )
+                operations_graph = method()
+                executor = controller.Controller(
+                    lm,
+                    operations_graph,
+                    SortingPrompter(),
+                    SortingParser(),
+                    {
+                        "original": data[1],
+                        "current": "",
+                        "phase": 0,
+                        "method": method.__name__,
+                    },
+                )
+                try:
+                    executor.run()
+                except Exception as e:
+                    logging.error(f"Exception: {e}")
+                path = os.path.join(
+                    results_folder,
+                    method.__name__,
+                    f"{data[0]}.json",
+                )
+                executor.output_graph(path)
+                budget -= lm.cost
+                pbar.update(1)  # 更新主进度条
+
+    return orig_budget - budget
 
 
 if __name__ == "__main__":
     """
-    Input (x)   : an unordered list of 64 numbers between 0 and 9 (inclusive)
-    Output (y)  : a sorted list of 64 numbers between 0 and 9 (inclusive)
+    Input (x)   : an unordered list of 32 numbers between 0 and 9 (inclusive)
+    Output (y)  : a sorted list of 32 numbers between 0 and 9 (inclusive)
     Correct     : y == sorted(x)
     Input Example:
         [0, 1, 9, 4, 2, 2, 0, 5, 1...]
@@ -880,11 +733,7 @@ if __name__ == "__main__":
     budget = 30
     samples = [item for item in range(0, 100)]
     approaches = [direct_method, cot, tot, tot2, got]
-    THREADS = 4
 
-    try:
-        spent = asyncio.run(run(samples, approaches, budget, "chatgpt"))
-        logging.info(f"Spent {spent} out of {budget} budget.")
-    except Exception as e:
-        logging.error(f"Fatal error in main execution: {e}")
-        raise e
+    spent = run(samples, approaches, budget, "doubao-lite-32k")
+
+    logging.info(f"Spent {spent} out of {budget} budget.")

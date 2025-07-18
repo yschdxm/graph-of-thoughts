@@ -873,7 +873,7 @@ if __name__ == "__main__":
 
     try:
         # Run main async function
-        spent = asyncio.run(run(samples, approaches, budget, "ollama_chatgpt-llama2_13b"))
+        spent = asyncio.run(run(samples, approaches, budget, "doubao-lite-32k"))
         logging.info(f"Spent {spent} out of {budget} budget.")
     except Exception as e:
         logging.error(f"Fatal error in main execution: {e}")

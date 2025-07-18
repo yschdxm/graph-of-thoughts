@@ -1550,7 +1550,7 @@ if __name__ == "__main__":
     approaches = [direct_method, cot, tot, tot2, got4, got8, gotx]
     THREADS = 4
     try:
-        spent = asyncio.run(run(samples, approaches, budget, "chatgpt"))
+        spent = asyncio.run(run(samples, approaches, budget, "doubao-lite-32k"))
         logging.info(f"Spent {spent} out of {budget} budget.")
     except Exception as e:
         logging.error(f"Fatal error in main execution: {e}")

@@ -118,7 +118,7 @@ def plot_results(
     ax.set_title(f"Keyword Counting")
 
     ax2 = ax.twinx()
-    ax2.bar(positions, total_costs, alpha=0.5, color="blue", label="Total Cost ($)")
+    ax2.bar(positions, total_costs, alpha=0.5, color="blue", label="Total Cost (¥)")
     ax2.yaxis.set_tick_params(colors="#1919ff", labelsize=fig_fontsize)
     ax2.set_ylim(0, cost_upper)
     number_of_ticks = len(ax.get_yticks())
@@ -129,7 +129,7 @@ def plot_results(
 
     if display_right_ylabel:
         ax2.set_ylabel(
-            "Total Cost ($); the lower the better",
+            "Total Cost (¥); the lower the better",
             color="#1919ff",
             fontsize=fig_fontsize,
         )
@@ -155,11 +155,13 @@ def plot_results(
     fig.savefig(f"keyword_counting_{model}.pdf", bbox_inches="tight")
 
 
+file = "doubao-lite-32k_direct_method-cot-tot-tot2-got4-got8-gotx_2025-07-18_08-42-03"
+dir = "examples/keyword_counting/results/" + file
 plot_results(
-    get_plotting_data("examples/keyword_counting/results/doubao_direct_method-cot-tot-tot2-got4-got8-gotx_2025-07-15_21-17-05"),
+    get_plotting_data(dir),
     display_solved=True,
     annotation_offset=-0.3,
-    model="deepseek-vocano",
+    model="doubao-lite-32k",
     y_upper=35,
     display_left_ylabel=True,
     display_right_ylabel=True,

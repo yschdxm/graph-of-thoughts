@@ -137,7 +137,7 @@ def plot_results(
     ax.set_title(f"{length} elements")
 
     ax2 = ax.twinx()
-    ax2.bar(positions, total_costs, alpha=0.5, color="blue", label="Total Cost ($)")
+    ax2.bar(positions, total_costs, alpha=0.5, color="blue", label="Total Cost (¥)")
     ax2.yaxis.set_tick_params(colors="#1919ff", labelsize=fig_fontsize)
     if cost_upper > 0:
         ax2.set_ylim(0, cost_upper)
@@ -150,7 +150,7 @@ def plot_results(
 
     if display_right_ylabel:
         ax2.set_ylabel(
-            "Total Cost ($); the lower the better",
+            "Total Cost (¥); the lower the better",
             color="#1919ff",
             fontsize=fig_fontsize,
         )
@@ -176,11 +176,13 @@ def plot_results(
     fig.savefig(f"sorting_{model}_{length}.pdf", bbox_inches="tight")
 
 
+file = "ollama_chatgpt-llama2_13b_direct_method-cot-tot-tot2-got_2025-07-17_19-33-38"
+dir = "examples/sorting/results/" + file
 plot_results(
-    get_plotting_data("examples/sorting/results/qwen-turbo_direct_method-cot-tot-tot2-got_2025-07-17_11-29-45"),
+    get_plotting_data(dir),
     length=32,
     display_solved=True,
-    model="qwen-turbo",
+    model="llama2_13b",
     display_left_ylabel=True,
     display_right_ylabel=True,
 )

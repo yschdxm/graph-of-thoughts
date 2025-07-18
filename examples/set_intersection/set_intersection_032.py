@@ -859,11 +859,11 @@ if __name__ == "__main__":
     budget = 15
     samples = [item for item in range(0, 100)]
     approaches = [direct_method, cot, tot, tot2, got]
-    THREDS = 4
+    THREDS = 10
 
     try:
         # Run main async function
-        spent = asyncio.run(run(samples, approaches, budget, "doubao-lite-32k"))
+        spent = asyncio.run(run(samples, approaches, budget, "ollama_chatgpt-qwen2.5_32b"))
         logging.info(f"Spent {spent} out of {budget} budget.")
     except Exception as e:
         logging.error(f"Fatal error in main execution: {e}")
