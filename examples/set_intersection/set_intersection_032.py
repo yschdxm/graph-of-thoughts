@@ -1,14 +1,3 @@
-# Copyright (c) 2023 ETH Zurich.
-#                    All rights reserved.
-#
-# Use of this source code is governed by a BSD-style license that can be
-# found in the LICENSE file.
-#
-# The source code is adapted from the sorting source code written by
-# Nils Blach.
-#
-# main author: Robert Gerstenberger
-
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -859,7 +848,7 @@ if __name__ == "__main__":
     budget = 15
     samples = [item for item in range(0, 100)]
     approaches = [direct_method, cot, tot, tot2, got]
-    THREDS = 10
+    THREDS = 5
 
     try:
         # Run main async function

@@ -1,11 +1,3 @@
-# Copyright (c) 2023 ETH Zurich.
-#                    All rights reserved.
-#
-# Use of this source code is governed by a BSD-style license that can be
-# found in the LICENSE file.
-#
-# main author: Nils Blach
-
 import json
 import os
 import matplotlib.pyplot as plt
@@ -157,6 +149,7 @@ def plot_results(
 
     model = model.replace(".", "").replace("-", "").lower()
     fig.savefig(f"doc_merge_{model}_{num_ndas}.pdf", bbox_inches="tight")
+    fig.savefig("temp_plot.png", bbox_inches="tight")
 
 
 file = "doubao-lite-32k_direct_method-cot-tot-got-got2_2025-07-18_08-32-06"
@@ -169,5 +162,5 @@ plot_results(
     y_upper=10,
     display_left_ylabel=True,
     display_right_ylabel=True,
-    cost_upper=15,
+    cost_upper=6,
 )

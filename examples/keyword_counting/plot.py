@@ -1,12 +1,3 @@
-# Copyright (c) 2023 ETH Zurich.
-#                    All rights reserved.
-#
-# Use of this source code is governed by a BSD-style license that can be
-# found in the LICENSE file.
-#
-# main author: Nils Blach
-# contributions: Ales Kubicek
-
 import json
 import os
 import matplotlib.pyplot as plt
@@ -153,6 +144,7 @@ def plot_results(
 
     model = model.replace(".", "").replace("-", "").lower()
     fig.savefig(f"keyword_counting_{model}.pdf", bbox_inches="tight")
+    fig.savefig("temp_plot.png", bbox_inches="tight")
 
 
 file = "doubao-lite-32k_direct_method-cot-tot-tot2-got4-got8-gotx_2025-07-18_08-42-03"

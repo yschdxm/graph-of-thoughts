@@ -1,12 +1,3 @@
-# Copyright (c) 2023 ETH Zurich.
-#                    All rights reserved.
-#
-# Use of this source code is governed by a BSD-style license that can be
-# found in the LICENSE file.
-#
-# main author: Nils Blach
-# contributions: Robert Gerstenberger
-
 import json
 import os
 import matplotlib.pyplot as plt
@@ -172,6 +163,7 @@ def plot_results(
 
     model = model.replace(".", "").replace("-", "").lower()
     fig.savefig(f"set_intersection_{model}_{length}.pdf", bbox_inches="tight")
+    fig.savefig("temp_plot.png", bbox_inches="tight")
 
 file = "doubao-lite-32k_direct_method-cot-tot-tot2-got_2025-07-17_20-12-34"
 dir = "examples/set_intersection/results/" + file
